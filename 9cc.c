@@ -24,12 +24,27 @@ struct Token {
 
 // 正在處理的標記
 Token *token;
+char *user_input;
 
 // 處理錯誤的函數
 // 取和printf相同的引數
 void error(char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  fprintf(stderr, "\n");
+  exit(1);
+}
+
+// 错误提示，指出错位的位置
+void error_at(char* loc, char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  
+  int pos = loc - user_input;
+  fprintf(stderr, "%s\n", user_input);
+  fprintf(stderr, "%*s", pos, "");
+  fprintf(stderr, "^ ");
   vfprintf(stderr, fmt, ap);
   fprintf(stderr, "\n");
   exit(1);
@@ -56,7 +71,7 @@ void expect(char op) {
 // 否則警告為錯誤。
 int expect_number() {
   if (token->kind != TK_NUM)
-    error("不是數值");
+    error_at(token->str, "不是數值");
   int val = token->val;
   token = token->next;
   return val;
@@ -112,8 +127,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  
+  user_input = argv[1];
   // 標記解析
-  token = tokenize(argv[1]);
+  token = tokenize(user_input);
 
   // 輸出前半部份組合語言指令
   printf(".intel_syntax noprefix\n");
