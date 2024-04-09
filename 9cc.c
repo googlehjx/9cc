@@ -5,29 +5,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-// 標記種類
+// the kind of token 
 typedef enum {
-  TK_RESERVED, // 符號
-  TK_NUM,      // 整數標記
-  TK_EOF,      // 代表輸入結束的標記
+  TK_RESERVED, // operating symbal
+  TK_NUM,      // numerial symbal
+  TK_EOF,      // the end symbal
 } TokenKind;
 
 typedef struct Token Token;
 
-// 標記型態
+// The info of Token, including a item of TokenKind, and a pointer pointing to the next node 
 struct Token {
-  TokenKind kind; // 標記的型態
-  Token *next;    // 下一個輸入標記
-  int val;        // kind為TK_NUM時的數值
-  char *str;      // 標記文字列
+  TokenKind kind; // token kind: symbal "+/-" or number
+  Token *next;    // pointing to next node
+  int val;        // if it's a number, this item has meaning
+  char *str;      // the start of the string comprising this token
 };
 
-// 正在處理的標記
+// a global pointer, representing the whole chain of tokens
 Token *token;
+// a global pointer, represnting the whole original input string
 char *user_input;
 
-// 處理錯誤的函數
-// 取和printf相同的引數
+// error print funciton
 void error(char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
@@ -36,7 +36,7 @@ void error(char *fmt, ...) {
   exit(1);
 }
 
-// 错误提示，指出错位的位置
+// error print fucntion with location info
 void error_at(char* loc, char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
@@ -50,8 +50,86 @@ void error_at(char* loc, char *fmt, ...) {
   exit(1);
 }
 
-// 下一個標記為符合預期的符號時，讀入一個標記並往下繼續，
-// 回傳true。否則回傳false。
+
+// 建立一個新的標記，連結到cur
+Token *new_token(TokenKind kind, Token *cur, char *str) {
+  Token *tok = calloc(1, sizeof(Token));
+  tok->kind = kind;
+  tok->str = str;
+  cur->next = tok;
+  return tok;
+}
+
+// tokenize the input string, getting a list of tokens
+Token *tokenize(char *p) {
+  Token head;
+  head.next = NULL;
+  Token *cur = &head;
+  
+  while (*p) {
+    // skip white spaces
+    if (isspace(*p)) {
+      p++;
+      continue;
+    }
+
+    if (strchr("+-*/()", *p)) {
+      cur = new_token(TK_RESERVED, cur, p++);
+      continue;
+    }
+
+    if (isdigit(*p)) {
+      cur = new_token(TK_NUM, cur, p);
+      cur->val = strtol(p, &p, 10);
+      continue;
+    }
+
+    error_at(p, "invalid token");
+  }
+
+  new_token(TK_EOF, cur, p);
+  return head.next;
+}
+
+// 抽象語法樹結點的種類
+typedef enum {
+  ND_ADD, // +
+  ND_SUB, // -
+  ND_MUL, // *
+  ND_DIV, // /
+  ND_NUM, // 整數
+} NodeKind;
+
+typedef struct Node Node;
+
+// 抽象語法樹結點的結構
+struct Node {
+  NodeKind kind; // 結點的型態
+  Node *lhs;     // 左邊
+  Node *rhs;     // 右邊
+  int val;       // 只在kind為ND_NUM時使用
+};
+
+Node* new_node(NodeKind kind){
+	Node* node = calloc(1, sizeof(Node));
+	node->kind = kind;
+	return node;
+}
+
+Node *new_binary(NodeKind kind, Node *lhs, Node *rhs) {
+  Node *node = new_node(kind);
+  node->lhs = lhs;
+  node->rhs = rhs;
+  return node;
+}
+
+Node *new_num(int val) {
+  Node *node = new_node(ND_NUM);
+  node->val = val;
+  return node;
+}
+
+// expecting an operator symbal token, and return true o return false 
 bool consume(char op) {
   if (token->kind != TK_RESERVED || token->str[0] != op)
     return false;
@@ -81,49 +159,95 @@ bool at_eof() {
   return token->kind == TK_EOF;
 }
 
-// 建立一個新的標記，連結到cur
-Token *new_token(TokenKind kind, Token *cur, char *str) {
-  Token *tok = calloc(1, sizeof(Token));
-  tok->kind = kind;
-  tok->str = str;
-  cur->next = tok;
-  return tok;
+
+// 声明
+Node* expr();
+Node* mul();
+Node* unary();
+Node* primary();
+
+Node *expr() {
+  Node *node = mul();
+
+  for (;;) {
+    if (consume('+'))
+      node = new_binary(ND_ADD, node, mul());
+    else if (consume('-'))
+      node = new_binary(ND_SUB, node, mul());
+    else
+      return node;
+  }
 }
 
-// 將輸入文字列p作標記解析並回傳標記連結串列
-Token *tokenize(char *p) {
-  Token head;
-  head.next = NULL;
-  Token *cur = &head;
+// mul = unary ("*" unary | "/" unary)
+Node *mul() {
+  Node *node = unary();
 
-  while (*p) {
-    // 跳過空白符號
-    if (isspace(*p)) {
-      p++;
-      continue;
-    }
+  for (;;) {
+    if (consume('*'))
+      node = new_binary(ND_MUL, node, unary());
+    else if (consume('/'))
+      node = new_binary(ND_DIV, node, unary());
+    else
+      return node;
+  }
+}
 
-    if (*p == '+' || *p == '-') {
-      cur = new_token(TK_RESERVED, cur, p++);
-      continue;
-    }
+// unary = ("+" | "-")? unary
+Node* unary(){
+	if(consume('+'))
+		return primary();
+	if(consume('-'))
+		return new_binary(ND_SUB, new_num(0), primary());
+	return primary();
+}
 
-    if (isdigit(*p)) {
-      cur = new_token(TK_NUM, cur, p);
-      cur->val = strtol(p, &p, 10);
-      continue;
-    }
-
-    error("標記解析失敗");
+Node *primary() {
+  // 下一個標記如果是"("，則應該是"(" expr ")"
+  if (consume('(')) {
+    Node *node = expr();
+    expect(')');
+    return node;
   }
 
-  new_token(TK_EOF, cur, p);
-  return head.next;
+  // 否則應該為數值
+  return new_num(expect_number());
+}
+
+void gen(Node *node) {
+  if (node->kind == ND_NUM) {
+    printf("  push %d\n", node->val);
+    return;
+  }
+
+  gen(node->lhs);
+  gen(node->rhs);
+
+  printf("  pop rdi\n");
+  printf("  pop rax\n");
+
+  switch (node->kind) {
+  case ND_ADD:
+    printf("  add rax, rdi\n");
+    break;
+  case ND_SUB:
+    printf("  sub rax, rdi\n");
+    break;
+  case ND_MUL:
+    printf("  imul rax, rdi\n");
+    break;
+  case ND_DIV:
+    printf("  cqo\n");
+    printf("  idiv rdi\n");
+    break;
+  }
+
+  printf("  push rax\n");
 }
 
 int main(int argc, char **argv) {
   if (argc != 2) {
-    error("引數數量錯誤");
+    error("%s: invalid number of argments\n", argv[0]);
     return 1;
   }
 
@@ -131,28 +255,20 @@ int main(int argc, char **argv) {
   user_input = argv[1];
   // 標記解析
   token = tokenize(user_input);
+  Node *node = expr();
 
   // 輸出前半部份組合語言指令
   printf(".intel_syntax noprefix\n");
   printf(".global main\n");
   printf("main:\n");
+  
 
-  // 確認算式必須以數開頭
-  // 輸出最初的mov指令
-  printf("  mov rax, %d\n", expect_number());
+  // 一邊爬抽象語法樹一邊產出指令
+  gen(node);
 
-  // 一邊消耗`+ <數>`或`- <數>`的標記，
-  // 並輸出組合語言指令
-  while (!at_eof()) {
-    if (consume('+')) {
-      printf("  add rax, %d\n", expect_number());
-      continue;
-    }
-
-    expect('-');
-    printf("  sub rax, %d\n", expect_number());
-  }
-
+  // 整個算式的結果應該留在堆疊頂部
+  // 將其讀到RAX作為函式的返回值
+  printf("  pop rax\n");
   printf("  ret\n");
   return 0;
 }
